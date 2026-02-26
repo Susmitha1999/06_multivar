@@ -188,7 +188,7 @@ weather %>%
   mutate(r2 = map_dbl(data,
                   ~lm(strength_gtex ~ value,
                       data = .x) %>%
-                    glance(.) %>%
+                    glance() %>%
                     pull(r.squared)
                   )) %>%
   arrange(desc(r2))
@@ -243,12 +243,14 @@ Multicollinearity is an issue because:
 Let's select a few variables to run some tests.  
 Two uncorrelated variables:
 ```{r uncorrelated}
+
 weather %>%
   ggplot(aes(x = mean_dayl.s_Apr, 
              y = sum_prcp.mm_Oct)) +
   geom_point() +
-  geom_smooth(method="lm") +
-  stat_correlation()
+  geom_smooth(method="lm") #+
+  #stat_correlation()
+
 ```
 
 Two correlated variables:
@@ -264,13 +266,19 @@ weather %>%
 Now let's fit some models with one or two uncorrelated and correlated variables explaining fiberstrength and see what happens.  
 
 ```{r strength ~ mean_dayl.s_Apr}
-lm_dayl.apr 
+
+lm_dayl.apr <- lm(strength_gtex ~ mean_dayl.s_Apr,
+                  data = weather) %>%
+  tidy() %>%
+  filter(term != "(Intercept)") %>%
+  mutate(mod = "lm_dayl.apr")
 
 lm_dayl.apr
 
 ```
 
 ```{r strength ~ sum_prcp.mm_Oct}
+
 lm_prp.oct <- lm(strength_gtex ~ sum_prcp.mm_Oct,
    data = weather) %>%
   tidy() %>%
@@ -278,9 +286,12 @@ lm_prp.oct <- lm(strength_gtex ~ sum_prcp.mm_Oct,
   mutate(mod="lm_prp.oct")
 
 lm_prp.oct
+
 ```
 
+
 ```{r strength ~ mean_dayl.s_Apr + sum_prcp.mm_Oct}
+
 lm_dayl.prcp <- lm(strength_gtex ~ mean_dayl.s_Apr + 
                    sum_prcp.mm_Oct,
    data = weather) %>%
@@ -293,6 +304,7 @@ lm_dayl.prcp
 ```
 
 ```{r strength ~ mean_dayl.s_Apr + mean_dayl.s_May}
+
 lm_daylapr.daylmay <- lm(strength_gtex ~ mean_dayl.s_Apr + 
                   mean_dayl.s_May,
    data = weather) %>%
@@ -305,21 +317,30 @@ lm_daylapr.daylmay
 ```
 
 ```{r Checking multicollinearity}
+
 lm_dayl.apr %>%
   bind_rows(lm_prp.oct, 
             lm_dayl.prcp,
             lm_daylapr.daylmay) %>%
-  mutate(mod=factor(mod,
+  mutate(mod=factor(mod,        #This step is useful if we want the specific order of levels
                     levels=c("lm_dayl.apr",
                              "lm_prp.oct",
                              "lm_2var.uncor",
-                             "lm_2var.cor"))) %>%
+                             "lm_2var.cor"))) %>% 
   filter(term != "mean_dayl.s_May") %>%
-  ggplot(aes(x=mod))
+  ggplot(aes(x=mod)) +
+  geom_pointrange(aes(y = estimate,
+                      ymin = estimate - std.error,
+                      ymax = estimate + std.error
+                      )) +
+  facet_wrap(~term, scales = "free_y") +
+  scale_x_discrete(guide = guide_axis(n.dodge = 2)) #Useful if x-axis labels are overlapping
 
 ```
 
 What has happened with **mean_dayl.s_April** and **sum_prcp.mm_Oct** estimates and standard error when modeled i) alone, or with another uncorrelated variable vs. ii) with another correlated variable?
+
+When you compare the uncorrelated models, estimate didn't change but with correlated models estimate changes alot, it becomes negative for **mean_dayl.s_April** and the error around it also increases. 
 
 One way to check the degree of multicollinearity between two predictos is with the variance inflation factor (VIF).  
 
@@ -331,12 +352,20 @@ General rule of thumb:
 - VIF > 5: severe multicollinearity  
 
 Let's check the variance inflation factor (VIF) of both uncorrelated and correlated models
+
 ```{r vif uncorrelated}
+
 # Uncorrelated
+
+vif(lm(strength_gtex ~ mean_dayl.s_Apr + 
+                   sum_prcp.mm_Oct,
+   data = weather) )
+
 ```
 
 
 ```{r vif correlated}
+
 # Correlated
 lm(strength_gtex ~ mean_dayl.s_Apr + 
                   mean_dayl.s_May,
@@ -368,9 +397,12 @@ Some analysis do the normalization for you (like PCA), and others don't (like k-
 
 Since both PCA and k-means only take numerical variables, let's select them now.  
 ```{r selecting only numerical vars}
-weather_n 
+
+weather_n <- weather %>%
+  dplyr::select(-year, -site, -strength_gtex)
 
 weather_n
+
 ```
 
 # PCA  
@@ -398,19 +430,30 @@ Some PCA properties:
 - The goal is to select a small number of PCs that explain a minimum threshold of the total variance (e.g., 70%).  
 
 ```{r pca in action}
+
 knitr::include_graphics("https://miro.medium.com/v2/resize:fit:1200/1*V4H3Cu8qGr_90WANKSO9BA.gif")
+
 ```
+
 Let's run PCA for our weather data.  
 
 ```{r pca model}
-mod_pca 
+
+mod_pca <- prcomp(weather_n, scale. = T)
+
+summary(mod_pca)
 
 ```
 
 ## Choosing number of PCs  
 Based on scree plot (total variance):  
+
 ```{r pca checking number of components}
+
 # Scree plot
+fviz_eig(mod_pca,
+         addlabels = T
+         )
 
 ```
     
@@ -420,6 +463,14 @@ This indicates that original variables were correlated (as we expected).
 If wanted to use enough PCs to explain 70% of total variance, how many would we need?  
 ```{r PCs to explain 70pct variance}
 
+mod_pca %>%
+  get_eig() %>%
+  mutate(pc = 1:72) %>%
+  ggplot(aes(x = pc,
+             y = cumulative.variance.percent,
+             )) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = 70) 
 
 ```
     
@@ -431,6 +482,7 @@ Let's inspect PC1 through the loadings (weights) of each variable towards it.
 
 What are the weights that each variable received in this PC?  
 ```{r PC1 weights}
+
 mod_pca$rotation %>%
   as.data.frame() %>%
   rownames_to_column(var = "var") %>%
@@ -449,11 +501,16 @@ Which variables contributed most to PC1, regardless of direction?
 
 ```{r variables contributing to PC1}
 
+fviz_contrib(mod_pca,
+             choice = "var",
+             axes = 1
+             )
 ```
   
 Let's check the eigenvectors for both PCs 1 and 2 variables:  
 
 ```{r pca variable contribution }
+
 fviz_pca_var(mod_pca, 
              col.var = "contrib", # Color by contributions to the PC
              gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
@@ -466,8 +523,14 @@ The longer is the eigenvector for a given variable, the more important it is tow
 
 Let's plot PC1 vs PC2 scores, look for any groupings.  
 
+PC1 ~ sum_precip_oct * coefficient +
+      mean_daylength_jan * coefficient
+      
 ```{r PC1 vs PC2}
 
+fviz_pca_ind(mod_pca,
+             label = F
+             )
 ```
   
 Appears that some groups exist.  
@@ -483,37 +546,55 @@ What now?
 Let's add the first 4 PCs to our original dataset and run a regression versus grain yield.    
 
 ```{r pca scores}
+
 # Extract first 4 PCs scores
-pca_scores 
+
+pca_scores <- mod_pca$x %>%
+  as.data.frame() %>%
+  dplyr::select(PC1:PC4)
 
 pca_scores
+
 ```
 
 ```{r pca regression}
+
 # Adding PCs 1-4 scores to original data set
-weather_postpca 
+weather_postpca <- weather %>% 
+  bind_cols(pca_scores) 
 
 # Regression of yield ~ PCs
 
-lm_pca 
+lm_pca <- lm(strength_gtex ~ PC1 + PC2 + PC3 + PC4,
+             data = weather_postpca
+             )
 
 # Summary  
 summary(lm_pca)
+
 ```
 
 
 ```{r pca regression}
+
 # Checking VIF
+vif(lm_pca)
 
 ```
 
 ```{r pca regression plots}
+
 # Plotting strength vs PC1
+ggplot(data = weather_postpca, 
+       aes(x = PC1, y = strength_gtex))+
+  geom_point() +
+  geom_smooth(method = "lm")
 
 ```
 
 
 ```{r pca regression plots}
+
 # Plotting strength vs PC2
 ggplot(weather_postpca, 
        aes(x = PC2, y = strength_gtex))+
@@ -523,6 +604,7 @@ ggplot(weather_postpca,
 ```
 
 ```{r pca regression plots}
+
 # Plotting strength vs PC3
 ggplot(weather_postpca, 
        aes(x = PC3, y = strength_gtex))+
